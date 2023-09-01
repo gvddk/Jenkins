@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+    emvironment {
+        NAME="lunar-system"
+        VERSION="${env.BUILD_ID}-${env.GIT_COMMIT}"
+        IMAGE_REPO="gvddk"
+        ARGOCD_TOKEN=credentials {'argocd-token'}
+        GITEA_TOKEN=credentials {'gitea-token'}
+    }
+
+    stages{
+        stage("Unit Tests"){
+            steps {
+                echo "Running unit tests"
+            }
+        }
+
+        stage('Build image'){
+            steps {
+                sh "docker build -t ${NAME} ."
+                sh "docker tag ${NAME}:latest ${IMAGE_REPO}/${NAME}:${VERSION}"
+            }
+        }
+
+//Docker pipeline plugin
+        stage('Push image'){
+            steps {
+                WithDockerRegistry([credentialsId: "docker-hub", url: ""]){
+                    sh "docker push ${IMAGE_REPO}....."
+                }
+            }
+        }
+
+
+        stage('clone/Pull Repo'){
+            steps {
+                script {
+                    if(fileExists('gitops-argocd')){
+                        echo "cloned repo already exists - pulling latest changes."
+                        dir('gitops-argocd'){
+                            sh 'git pull'
+                        }
+                    } else {
+                        echo "Repo doesn't exist - cloning the repo."
+                        sh 'git clone -b feature-gitea <REPO>'
+                    }
+                }
+            }
+        }
+
+        stage('Update Manifests'){
+            steps {
+                dir('gitops-argocd/jenkins-demo'){
+                    sh "sed -i "s#gvddk.*#${IMAGE.REPO}${NAME}${VERSION}#g" deployment.yaml
+                    sh "cat deployment.yaml"
+                }
+            }
+        }
+
+        stage('Commit && Push'){
+            steps {
+                dir('gitops-argocd/jenkins-demo'){
+                    sh "git config --global user.email 'xxxxxxx'"
+                    sh "git remote set-url origin <http repo>"
+                    sh 'git checkout feature-gitea'
+                    sh 'git add -A'
+                    sh 'git commit -m "Updated image version - $VERSION'
+                    sh 'git push origin feature-gitea'
+
+                }
+            }
+        }
+        stage('Raise PR'){
+            steps {
+                sh "bash pr.sh"
+            }
+        }
+    }
+
+}
